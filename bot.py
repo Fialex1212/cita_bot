@@ -1,48 +1,50 @@
 import asyncio
-import logging
-import sqlite3
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message
-from aiogram.filters import Command
-from dotenv import load_dotenv
-import os
+from create_bot import bot, dp, admins
+from data_base.base import create_tables
+from aiogram.types import BotCommand, BotCommandScopeDefault
 
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+from handlers.start_router import start_router
 
 
-def add_user(telegram_id, username):
-    db_path = "/app/database.db"
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT OR IGNORE INTO users (telegram_id, username) VALUES (?, ?)",
-        (telegram_id, username),
-    )
-    conn.commit()
-    conn.close()
+# Функция, которая настроит командное меню (дефолтное для всех пользователей)
+async def set_commands():
+    commands = [BotCommand(command='start', description='Старт')]
+    await bot.set_my_commands(commands, BotCommandScopeDefault())
 
 
-@dp.message(Command("start"))
-async def start(message: Message):
-    add_user(message.from_user.id, message.from_user.username)
-    await message.answer(
-        f"Hello, {message.from_user.first_name}! You have been added to the database."
-    )
+async def start_bot():
+    await set_commands()
+    await create_tables()
+    for admin_id in admins:
+        try:
+            await bot.send_message(admin_id, f'Я запущен🥳.')
+        except:
+            pass
 
 
-@dp.message()
-async def echo(message: Message):
-    await message.answer(f"You said: {message.text}")
+# Функция, которая выполнится когда бот завершит свою работу
+async def stop_bot():
+    try:
+        for admin_id in admins:
+            await bot.send_message(admin_id, 'Бот остановлен. За что?😔')
+    except:
+        pass
 
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
-    print("Bot is running...")
-    await dp.start_polling(bot)
+    # регистрация роутеров
+    dp.include_router(start_router)
+
+    # регистрация функций
+    dp.startup.register(start_bot)
+    dp.shutdown.register(stop_bot)
+
+    # запуск бота в режиме long polling при запуске бот очищает все обновления, которые были за его моменты бездействия
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        await bot.session.close()
 
 
 if __name__ == "__main__":
